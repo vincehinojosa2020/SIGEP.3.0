@@ -1,0 +1,80 @@
+# docker-compose.yml
+# SIGEP - Sistema Integrado de Gestao de Exploracao e Producao
+# PetroNac - Petrolera Nacional S.A.
+# Configuracao Docker Compose para ambiente de desenvolvimento
+# Ultima atualizacao: 2018-03-15
+
+version: '3.7'
+
+services:
+  app:
+    build: .
+    container_name: sigep_app
+    ports:
+      - "8000:8000"
+    environment:
+      - DJANGO_SETTINGS_MODULE=sigep.settings
+      - DATABASE_URL=postgres://sigep_user:S1g3p@2018!@db:5432/sigep_db
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=django-insecure-chave-super-secreta-sigep-2018-nao-usar-em-producao
+      - DEBUG=True
+      - ALLOWED_HOSTS=*
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - .:/app
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    restart: unless-stopped
+    networks:
+      - sigep_network
+
+  db:
+    image: postgres:12-alpine
+    container_name: sigep_db
+    environment:
+      - POSTGRES_DB=sigep_db
+      - POSTGRES_USER=sigep_user
+      - POSTGRES_PASSWORD=S1g3p@2018!
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    networks:
+      - sigep_network
+
+  redis:
+    image: redis:6-alpine
+    container_name: sigep_redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    networks:
+      - sigep_network
+
+  # Celery worker para processamento assincrono de relatorios
+  celery_worker:
+    build: .
+    container_name: sigep_celery
+    command: celery -A sigep worker -l info --concurrency=2
+    environment:
+      - DJANGO_SETTINGS_MODULE=sigep.settings
+      - DATABASE_URL=postgres://sigep_user:S1g3p@2018!@db:5432/sigep_db
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+    restart: unless-stopped
+    networks:
+      - sigep_network
+
+volumes:
+  postgres_data:
+  static_volume:
+  media_volume:
+
+networks:
+  sigep_network:
+    driver: bridge
