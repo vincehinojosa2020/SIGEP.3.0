@@ -1,0 +1,31 @@
+name: Depends SCA Scan
+
+on:
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install Trivy
+        run: |
+          sudo apt-get install -y wget apt-transport-https gnupg
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor | sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" | sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install -y trivy
+
+      - name: Scan (GitHub log)
+        run: trivy fs --scanners vuln --severity CRITICAL,HIGH,MEDIUM,LOW --format table .
+
+      - name: Scan (JSON)
+        run: trivy fs --scanners vuln --severity CRITICAL,HIGH,MEDIUM,LOW --format json --output results.json .
+
+      - name: Send to Depends
+        run: |
+          curl -X POST "https://trivy-github-scanner.emergent.host/api/webhook/scan" \
+            -H "Content-Type: application/json" \
+            -d "{\"project_id\":\"proj_4e4f1323ca74\",\"webhook_secret\":\"8f7f9f4395c446808c8cc02e803df28c\",\"commit_sha\":\"${{ github.sha }}\",\"branch\":\"${{ github.ref_name }}\",\"scan_type\":\"all\",\"trivy_results\":$(cat results.json),\"status\":\"completed\"}"
