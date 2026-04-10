@@ -1,0 +1,104 @@
+# Depends SCA Scanner - GitHub Action
+# Generated for project: sigep 2.0
+# Repo: https://github.com/vincehinojosa2020/SIGEP.2.0/tree/conflict_090426_2245
+
+name: Depends Security Scan
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  security-scan:
+    name: Trivy Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner (Dependencies)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'json'
+          output: 'trivy-deps-results.json'
+          severity: 'CRITICAL,HIGH,MEDIUM,LOW'
+      - name: Run Trivy vulnerability scanner (Container)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'image'
+          image-ref: '${{ github.repository }}:${{ github.sha }}'
+          format: 'json'
+          output: 'trivy-container-results.json'
+          severity: 'CRITICAL,HIGH,MEDIUM,LOW'
+        continue-on-error: true
+      - name: Run Trivy config scanner (IaC)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          scan-ref: '.'
+          format: 'json'
+          output: 'trivy-iac-results.json'
+          severity: 'CRITICAL,HIGH,MEDIUM,LOW'
+
+      - name: Merge and send results to Depends
+        run: |
+          # Merge all Trivy results
+          echo '{}' > merged-results.json
+          
+          if [ -f trivy-deps-results.json ]; then
+            jq -s '.[0] * {Results: (.[0].Results // []) + (.[1].Results // [])}' merged-results.json trivy-deps-results.json > temp.json && mv temp.json merged-results.json
+          fi
+          
+          if [ -f trivy-container-results.json ]; then
+            jq -s '.[0] * {Results: (.[0].Results // []) + (.[1].Results // [])}' merged-results.json trivy-container-results.json > temp.json && mv temp.json merged-results.json
+          fi
+          
+          if [ -f trivy-iac-results.json ]; then
+            jq -s '.[0] * {Results: (.[0].Results // []) + (.[1].Results // [])}' merged-results.json trivy-iac-results.json > temp.json && mv temp.json merged-results.json
+          fi
+          
+          # Send to Depends webhook
+          curl -X POST "https://trivy-github-scanner.preview.emergentagent.com/api/webhook/scan" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+              --arg project_id "proj_4e4f1323ca74" \
+              --arg webhook_secret "8f7f9f4395c446808c8cc02e803df28c" \
+              --arg commit_sha "${{ github.sha }}" \
+              --arg branch "${{ github.ref_name }}" \
+              --arg scan_type "all" \
+              --slurpfile results merged-results.json \
+              '{
+                project_id: $project_id,
+                webhook_secret: $webhook_secret,
+                commit_sha: $commit_sha,
+                branch: $branch,
+                scan_type: $scan_type,
+                trivy_results: $results[0],
+                status: "completed"
+              }')"
+
+      - name: Check for critical/high vulnerabilities
+        if: always()
+        run: |
+          CRITICAL=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' merged-results.json 2>/dev/null || echo 0)
+          HIGH=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length' merged-results.json 2>/dev/null || echo 0)
+          
+          echo "Critical vulnerabilities: $CRITICAL"
+          echo "High vulnerabilities: $HIGH"
+          
+          if [ "${{ env.FAIL_ON_SEVERITY }}" == "CRITICAL" ] && [ "$CRITICAL" -gt 0 ]; then
+            echo "::error::Found $CRITICAL critical vulnerabilities"
+            exit 1
+          fi
+          
+          if [ "${{ env.FAIL_ON_SEVERITY }}" == "HIGH" ] && [ "$((CRITICAL + HIGH))" -gt 0 ]; then
+            echo "::error::Found $CRITICAL critical and $HIGH high vulnerabilities"
+            exit 1
+          fi
+        env:
+          FAIL_ON_SEVERITY: HIGH
